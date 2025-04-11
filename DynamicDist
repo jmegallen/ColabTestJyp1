@@ -1,0 +1,124 @@
+import folium
+import requests
+
+# Launch site coordinates
+launch_site_lat = 28.563197
+launch_site_lon = -80.576820
+
+# OpenStreetMap Overpass API URL
+overpass_url = "http://overpass-api.de/api/interpreter"
+
+# Function to fetch data from Overpass API
+def fetch_nearby_osm_data(lat, lon, query_filter, radius=5000, limit=5):
+    """
+    Fetches nearby data from OpenStreetMap using Overpass API.
+    Args:
+        lat, lon: Coordinates to search around.
+        query_filter: Filter query (e.g., natural=coastline, highway).
+        radius: Search radius in meters.
+        limit: Number of results to return.
+    Returns:
+        List of (latitude, longitude, name) tuples for the closest features.
+    """
+    query = f"""
+    [out:json];
+    node
+      [{query_filter}]
+      (around:{radius},{lat},{lon});
+    out body;
+    """
+    response = requests.get(overpass_url, params={'data': query})
+    data = response.json()
+
+    places = []
+    for element in data['elements']:
+        if 'lat' in element and 'lon' in element:
+            lat = element['lat']
+            lon = element['lon']
+            name = element.get('tags', {}).get('name', query_filter.title())
+            places.append((lat, lon, name))
+    return places[:limit]  # Return up to the specified number of results
+
+# Refined coastline query
+def fetch_nearby_coastlines(lat, lon, radius=50000, limit=5):
+    query = f"""
+    [out:json];
+    way
+      [natural=coastline]
+      (around:{radius},{lat},{lon});
+    out center;
+    """
+    response = requests.get(overpass_url, params={'data': query})
+    data = response.json()
+
+    places = []
+    for element in data['elements']:
+        if 'center' in element:  # Extract the center point of the way
+            center_lat = element['center']['lat']
+            center_lon = element['center']['lon']
+            name = "Coastline"
+            places.append((center_lat, center_lon, name))
+    return places[:limit]
+
+# Refined city query
+def fetch_nearby_cities(lat, lon, radius=50000, limit=5):
+    query = f"""
+    [out:json];
+    node
+      [place~"^(city|town)$"]
+      (around:{radius},{lat},{lon});
+    out body;
+    """
+    response = requests.get(overpass_url, params={'data': query})
+    data = response.json()
+
+    places = []
+    for element in data['elements']:
+        if 'lat' in element and 'lon' in element:
+            lat = element['lat']
+            lon = element['lon']
+            name = element.get('tags', {}).get('name', "City/Town")
+            places.append((lat, lon, name))
+    return places[:limit]
+
+# Fetch locations using refined queries
+closest_coastlines = fetch_nearby_coastlines(launch_site_lat, launch_site_lon, limit=5)
+closest_motorways = fetch_nearby_osm_data(launch_site_lat, launch_site_lon, "highway", 5000, limit=5)
+closest_trainlines = fetch_nearby_osm_data(launch_site_lat, launch_site_lon, "railway", 5000, limit=5)
+closest_cities = fetch_nearby_cities(launch_site_lat, launch_site_lon, limit=5)
+
+# Initialize the map
+site_map = folium.Map(width=1100, height=550, location=[launch_site_lat, launch_site_lon], zoom_start=12)
+
+# Add a marker for the launch site
+folium.Marker(
+    [launch_site_lat, launch_site_lon],
+    popup="Launch Site",
+    icon=folium.Icon(color="orange", icon="rocket")
+).add_to(site_map)
+
+# Function to add markers and lines to the Folium map
+def add_markers_and_lines(map_object, places, color, label):
+    for lat, lon, name in places:
+        # Add marker
+        folium.Marker(
+            [lat, lon],
+            popup=f"{label}: {name}",
+            icon=folium.Icon(color=color)
+        ).add_to(map_object)
+
+        # Add a line from the launch site to the location
+        folium.PolyLine(
+            locations=[[launch_site_lat, launch_site_lon], [lat, lon]],
+            color=color,
+            weight=2
+        ).add_to(map_object)
+
+# Add markers and lines for coastlines, motorways, train lines, and cities
+add_markers_and_lines(site_map, closest_coastlines, 'blue', 'Coastline')
+add_markers_and_lines(site_map, closest_motorways, 'green', 'Motorway')
+add_markers_and_lines(site_map, closest_trainlines, 'red', 'Train Line')
+add_markers_and_lines(site_map, closest_cities, 'purple', 'City')
+
+# Display the map
+site_map
